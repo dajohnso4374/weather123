@@ -57,12 +57,56 @@
       </div>
     </section>
 
+    <section id="hourly" class="card">
+      <div class="card-head">
+        <h2>Next 24 Hours</h2>
+        <span id="hourly-err" class="muted"></span>
+      </div>
+      <div id="hourly-chart" class="hourly-chart"><!-- SVG filled by JS --></div>
+    </section>
+
+    <section id="air" class="card">
+      <div class="card-head">
+        <h2>Air Quality &amp; UV</h2>
+      </div>
+      <div class="air-grid">
+        <div class="air-block">
+          <h3>Air Quality (AQI US)</h3>
+          <div class="air-main">
+            <span id="aq-val" class="air-num">&mdash;</span>
+            <span id="aq-label" class="air-badge">loading&hellip;</span>
+          </div>
+          <dl class="air-stats">
+            <div><dt>PM2.5</dt><dd id="aq-pm">&mdash;</dd></div>
+            <div><dt>Ozone</dt><dd id="aq-ozone">&mdash;</dd></div>
+          </dl>
+        </div>
+        <div class="air-block">
+          <h3>UV Index</h3>
+          <div class="air-main">
+            <span id="uv-val" class="air-num">&mdash;</span>
+            <span id="uv-label" class="air-badge">loading&hellip;</span>
+          </div>
+          <p class="muted air-note">Peak expected this hour; protect skin above &ldquo;Moderate&rdquo;.</p>
+        </div>
+      </div>
+    </section>
+
     <section id="alerts" class="card" style="display: none">
       <div class="card-head">
         <h2>Severe Weather Alerts</h2>
         <span id="alerts-zone" class="muted"></span>
       </div>
       <div id="alerts-body"><!-- filled by JS --></div>
+    </section>
+
+    <section id="storms" class="card" style="display: none">
+      <div class="card-head">
+        <h2>Active Tropical Cyclones</h2>
+        <span id="storms-status" class="muted"></span>
+      </div>
+      <div id="storms-list" class="storms-list"><!-- filled by JS --></div>
+      <p class="muted storms-note">Data: NHC via Esri live feed, updated with each advisory. Toggle <b>Hurricanes</b> under Radar Source Layers to plot tracks, cones, watches &amp; warnings on the map.</p>
     </section>
 
     <section id="forecast" class="card">
@@ -77,6 +121,7 @@
       <div class="layer-toggle">
         <label><input type="checkbox" id="layer-radar" checked> Rain (RainViewer)</label>
         <label><input type="checkbox" id="layer-sat"> Satellite (GOES)</label>
+        <label><input type="checkbox" id="layer-hurr"> Hurricanes (tracks &amp; cone)</label>
         <label><input type="checkbox" id="layer-precip"> Precipitation (Open-Meteo tiles)</label>
         <label><input type="checkbox" id="layer-temp"> Temperature (Open-Meteo tiles)</label>
       </div>

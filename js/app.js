@@ -76,6 +76,7 @@ function initMap() {
     if (lastWeather.lat || lastWeather.lon) {
       loadWeather(lastWeather.lat, lastWeather.lon, null, false);
     }
+    if (hurricanesLoaded && hurricanesEnabled) loadHurricanes();
   }, WEATHER_REFRESH_MS);
 }
 
@@ -204,7 +205,8 @@ async function loadWeather(lat, lon, label, geocode) {
   const url =
     "https://api.open-meteo.com/v1/forecast?" +
     "latitude=" + lat + "&longitude=" + lon +
-    "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,precipitation&" +
+    "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,precipitation,uv_index&" +
+    "hourly=temperature_2m,precipitation_probability,weather_code&forecast_hours=24&" +
     "daily=weather_code,temperature_2m_max,temperature_2m_min&" +
     "temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&" +
     "timezone=auto&forecast_days=5";
@@ -213,7 +215,9 @@ async function loadWeather(lat, lon, label, geocode) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     renderCurrent(data.current);
+    renderHourly(data.hourly);
     renderForecast(data.daily);
+    loadAq(lat, lon);
     lastWeather = { lat, lon };
     loadAlerts(lat, lon);
     if (label) {
@@ -293,6 +297,145 @@ function renderCurrent(c) {
   document.getElementById("cond-wind").textContent = Math.round(c.wind_speed_10m) + " mph";
   document.getElementById("cond-precip").textContent = c.precipitation + " in";
   document.getElementById("cond-updated").textContent = new Date().toLocaleTimeString();
+
+  const uv = c.uv_index == null ? -1 : +c.uv_index;
+  document.getElementById("uv-val").textContent = uv < 0 ? "\u2014" : uv.toFixed(1);
+  const uvLbl = document.getElementById("uv-label");
+  uvLbl.textContent = uvLabel(uv);
+  uvLbl.className = "air-badge " + (uv < 0 ? "" : uvClass(uv));
+}
+
+// UV index -> label + color band
+function uvLabel(uv) {
+  if (uv < 0) return "n/a";
+  if (uv < 3) return "Low";
+  if (uv < 6) return "Moderate";
+  if (uv < 8) return "High";
+  if (uv < 11) return "Very High";
+  return "Extreme";
+}
+
+function uvClass(uv) {
+  if (uv < 3) return "air-good";
+  if (uv < 6) return "air-moderate";
+  if (uv < 8) return "air-us";
+  if (uv < 11) return "air-unhealthy";
+  return "air-very";
+}
+
+// ---------- 24-hour chart ----------
+function renderHourly(h) {
+  const box = document.getElementById("hourly-chart");
+  const err = document.getElementById("hourly-err");
+  if (!h || !h.time || !h.time.length) { box.innerHTML = ""; err.textContent = ""; return; }
+  const n = Math.min(24, h.time.length);
+  const ts = h.time.slice(0, n).map((t) => new Date(t));
+  const temps = h.temperature_2m.slice(0, n);
+  const probs = (h.precipitation_probability || h.precipitation_probability_max || []).slice(0, n);
+  const codes = (h.weather_code || []).slice(0, n);
+
+  const W = 960, H = 232, padL = 34, padR = 10, padT = 14, padB = 26;
+  const minT = Math.min.apply(null, temps);
+  const maxT = Math.max.apply(null, temps);
+  const span = Math.max(1, maxT - minT);
+  const step = (W - padL - padR) / (n - 1);
+  const x = (i) => padL + i * step;
+  const tempTop = padT, tempBot = 104;
+  const yT = (t) => tempTop + (1 - (t - minT) / span) * (tempBot - tempTop);
+  const barBase = H - padB;
+  const barH = (p) => (p / 100) * 96;
+
+  let svg = "";
+  svg += '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Next 24 hours temperature and rain chance">';
+
+  // gridlines + temp axis labels
+  [minT, maxT].forEach((t) => {
+    const y = yT(t).toFixed(1);
+    svg += '<line class="tick" x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '"/>';
+    svg += '<text x="' + (padL - 6) + '" y="' + (+y + 3.5).toFixed(1) + '" text-anchor="end">' + Math.round(t) + "\u00b0</text>";
+  });
+
+  // precipitation bars
+  probs.forEach((p, i) => {
+    if (!(p > 0)) return;
+    const bh = barH(p);
+    const fill = p >= 60 ? "#54b3ff" : p >= 30 ? "rgba(84,179,255,0.55)" : "rgba(84,179,255,0.28)";
+    svg += '<rect x="' + (x(i) - step * 0.3).toFixed(1) +
+      '" y="' + (barBase - bh).toFixed(1) +
+      '" width="' + (step * 0.6).toFixed(1) +
+      '" height="' + bh.toFixed(1) + '" rx="2" fill="' + fill + '"/>' +
+      '<title>' + Math.round(p) + "% chance of rain</title>";
+  });
+
+  // temperature line + dots
+  const pts = temps.map((t, i) => x(i).toFixed(1) + "," + yT(t).toFixed(1));
+  svg += '<polyline fill="none" stroke="#e8a33d" stroke-width="2" points="' + pts.join(" ") + '"/>';
+  temps.forEach((t, i) => {
+    const label = Math.round(t) + "\u00b0  " + Math.round(probs[i] || 0) + "%  " + wmo(codes[i]);
+    svg += '<circle cx="' + x(i).toFixed(1) + '" cy="' + yT(t).toFixed(1) +
+      '" r="3" fill="#e8a33d"><title>' + ts[i].toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) +
+      ": " + label + "</title></circle>";
+  });
+
+  // weather-code dot + hour label every 3 h
+  const codeColor = (c) =>
+    c >= 95 ? "#b56bff" : c >= 51 ? "#54b3ff" : c >= 71 ? "#9bdcff" : c >= 45 ? "#8fa3bd" : "#ffd43b";
+  for (let i = 0; i < n; i++) {
+    svg += '<circle class="hcode" cx="' + x(i).toFixed(1) + '" cy="' + (H - padB + 6) +
+      '" r="3" fill="' + codeColor(codes[i]) + '"/>';
+    if (i % 3 === 0) {
+      const lbl = ts[i].toLocaleTimeString([], { hour: "numeric" });
+      svg += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + lbl + "</text>";
+    }
+  }
+
+  svg += "</svg>";
+  box.innerHTML = svg;
+  err.textContent = "";
+}
+
+// ---------- Air quality (Open-Meteo) ----------
+async function loadAq(lat, lon) {
+  try {
+    const res = await fetch(
+      "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon +
+      "&current=us_aqi,pm2_5,ozone,pm10&timezone=auto"
+    );
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const c = data.current || {};
+    const aqi = c.us_aqi == null ? -1 : Math.round(c.us_aqi);
+    document.getElementById("aq-val").textContent = aqi < 0 ? "\u2014" : String(aqi);
+    const lbl = document.getElementById("aq-label");
+    lbl.textContent = aqi < 0 ? "n/a" : aqiLabel(aqi);
+    lbl.className = "air-badge " + (aqi < 0 ? "" : aqiClass(aqi));
+    document.getElementById("aq-pm").textContent =
+      c.pm2_5 == null ? "\u2014" : c.pm2_5.toFixed(0) + " \u00b5g/m\u00b3";
+    document.getElementById("aq-ozone").textContent =
+      c.ozone == null ? "\u2014" : Math.round(c.ozone) + " ppb";
+  } catch (err) {
+    const lbl = document.getElementById("aq-label");
+    lbl.textContent = "unavailable";
+    lbl.className = "air-badge";
+  }
+}
+
+function aqiLabel(aqi) {
+  if (aqi <= 50) return "Good";
+  if (aqi <= 100) return "Moderate";
+  if (aqi <= 150) return "Unhealthy for Sensitive";
+  if (aqi <= 200) return "Unhealthy";
+  if (aqi <= 300) return "Very Unhealthy";
+  return "Hazardous";
+}
+
+function aqiClass(aqi) {
+  if (aqi <= 50) return "air-good";
+  if (aqi <= 100) return "air-moderate";
+  if (aqi <= 150) return "air-us";
+  if (aqi <= 200) return "air-unhealthy";
+  if (aqi <= 300) return "air-very";
+  return "air-hazardous";
 }
 
 function renderForecast(daily) {
@@ -645,7 +788,188 @@ function tickClocks() {
   });
 }
 
-// ---------- Extra layers (Open-Meteo tile layers) ----------
+// ---------- Active tropical cyclones (NHC via Esri) ----------
+const HURRICANE_FS =
+  "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/Active_Hurricanes_v1/FeatureServer";
+const STORM_COLORS = ["#ffd43b", "#ff9f1c", "#ff6b4d", "#c952ff", "#4dd2ff", "#39d98a"];
+let hurricaneLayers = null;
+let hurricanesEnabled = false;
+let hurricanesLoaded = false;
+let hurricaneBusy = false;
+let hurricaneStorms = [];
+let hurricaneSeq = 0;
+
+async function loadHurricanes() {
+  if (hurricaneBusy) return;
+  hurricaneBusy = true;
+  const status = document.getElementById("storms-status");
+  try {
+    const results = await Promise.all(
+      [0, 2, 3, 4, 5].map((lid) =>
+        fetch(HURRICANE_FS + "/" + lid + "/query?where=1%3D1&f=geoJSON&returnGeometry=true&outSR=4326&outFields=*")
+          .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .catch(() => null)
+      )
+    );
+    const [posFC, fcTrackFC, obsTrackFC, coneFC, wwFC] = results;
+    hurricaneStorms = summarizeStorms(posFC);
+    drawHurricanes(posFC, fcTrackFC, obsTrackFC, coneFC, wwFC);
+    renderStormChips(hurricaneStorms);
+    hurricanesLoaded = true;
+
+    const card = document.getElementById("storms");
+    if (hurricaneStorms.length) {
+      card.style.display = "";
+      status.textContent = "NHC feed \u00b7 " + new Date().toLocaleTimeString();
+    } else {
+      card.style.display = "none";
+    }
+  } catch (err) {
+    const card = document.getElementById("storms");
+    if (card && card.style.display !== "none") {
+      status.textContent = "storm data unavailable (" + err.message + ")";
+    }
+  } finally {
+    hurricaneBusy = false;
+  }
+}
+
+function summarizeStorms(posFC) {
+  const map = new Map();
+  (posFC && posFC.features || []).forEach((f) => {
+    const a = f.properties || {};
+    if (!a.STORMNAME) return;
+    let s = map.get(a.STORMNAME);
+    if (!s) { s = { name: a.STORMNAME, points: [] }; map.set(a.STORMNAME, s); }
+    if (a.LAT != null && a.LON != null) {
+      s.points.push({ lat: a.LAT, lon: a.LON, tau: a.TAU || 0, wind: a.MAXWIND, mslp: a.MSLP, dir: a.TCDIR, spd: a.TCSPD, ssnum: a.SSNUM, src: a.STORMSRC || "", dvel: a.DATELBL || "" });
+    }
+  });
+  const out = [];
+  map.forEach((s) => {
+    const cur = s.points.find((p) => p.tau === 0) || s.points[0];
+    if (!cur) return;
+    out.push({ name: s.name, windKt: cur.wind, mslp: cur.mslp, dirDeg: cur.dir, spdKt: cur.spd, ssnum: cur.ssnum, src: cur.src, lat: cur.lat, lon: cur.lon });
+  });
+  return out.sort((a, b) => (b.windKt || 0) - (a.windKt || 0));
+}
+
+function stormColor(name) {
+  const i = hurricaneStorms.findIndex((s) => s.name === name);
+  return STORM_COLORS[i < 0 ? 0 : i % STORM_COLORS.length];
+}
+
+function catInfo(s) {
+  if (s.ssnum >= 1) return { cls: "cat-3", label: "Category " + s.ssnum };
+  if (s.windKt >= 64) return { cls: "cat-3", label: "Hurricane" };
+  if (s.windKt >= 50) return { cls: "cat-1", label: "Severe Storm" };
+  if (s.windKt >= 34) return { cls: "cat-ts", label: "Tropical Storm" };
+  return { cls: "cat-other", label: s.src || "Disturbance" };
+}
+
+const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+function compass(deg) {
+  if (deg == null || isNaN(deg)) return "";
+  return COMPASS[Math.round(((deg + 450) % 360) / 22.5) % 16];
+}
+
+function drawHurricanes(posFC, fcTrackFC, obsTrackFC, coneFC, wwFC) {
+  if (!hurricaneLayers) hurricaneLayers = L.featureGroup();
+  const onMap = map && map.hasLayer(hurricaneLayers);
+  if (onMap) map.removeLayer(hurricaneLayers);
+  hurricaneLayers.clearLayers();
+
+  if (fcTrackFC && fcTrackFC.features && fcTrackFC.features.length) {
+    hurricaneLayers.addLayer(L.geoJSON(fcTrackFC, {
+      style: (f) => ({ color: stormColor(f.properties.STORMNAME), weight: 2, dashArray: "5 5", opacity: 0.9 }),
+    }));
+  }
+  if (obsTrackFC && obsTrackFC.features && obsTrackFC.features.length) {
+    hurricaneLayers.addLayer(L.geoJSON(obsTrackFC, {
+      style: (f) => ({ color: stormColor(f.properties.STORMNAME), weight: 2, opacity: 0.75 }),
+    }));
+  }
+  if (coneFC && coneFC.features && coneFC.features.length) {
+    hurricaneLayers.addLayer(L.geoJSON(coneFC, {
+      style: (f) => {
+        const c = stormColor(f.properties.STORMNAME);
+        return { color: c, fillColor: c, fillOpacity: 0.12, weight: 1, opacity: 0.8 };
+      },
+    }));
+  }
+  if (wwFC && wwFC.features && wwFC.features.length) {
+    const WW = {
+      "Hurricane Warning": "#ff4d5e", "Hurricane Watch": "#ff9f1c",
+      "Tropical Storm Warning": "#ff6b4d", "Tropical Storm Watch": "#ffd43b",
+      "Tropical Depression Warning": "#ffb3c1", "Extratropical Warning": "#4dd2ff",
+    };
+    hurricaneLayers.addLayer(L.geoJSON(wwFC, {
+      style: (f) => {
+        const col = WW[f.properties.PLBL] || stormColor(f.properties.STORMNAME);
+        return { color: col, fillColor: col, fillOpacity: 0.22, weight: 1.5 };
+      },
+    }));
+  }
+  if (posFC && posFC.features && posFC.features.length) {
+    hurricaneLayers.addLayer(L.geoJSON(posFC, {
+      pointToLayer: (f, latlng) => {
+        const a = f.properties;
+        const tau = a.TAU || 0;
+        if (tau === 0) {
+          const s = hurricaneStorms.find((st) => st.name === a.STORMNAME);
+          return L.circleMarker(latlng, {
+            radius: 6, color: "#ff4d5e", fillColor: "#ff4d5e", fillOpacity: 0.9, weight: 1.5,
+          }).bindPopup(
+            "<b>" + a.STORMNAME + "</b> " + (s ? catInfo(s).label : "") +
+            "<br>center " + a.LAT + ", " + a.LON +
+            (a.MAXWIND != null ? "<br>winds " + a.MAXWIND + " kt" + (a.GUST != null ? " (gust " + a.GUST + ")" : "") : "") +
+            (a.MSLP != null ? "<br>pressure " + a.MSLP + " mb" : "") +
+            (a.TCDIR != null ? "<br>moving " + compass(a.TCDIR) + " at " + a.TCSPD + " kt" : "") +
+            (a.DATELBL ? "<br>" + a.DATELBL : "")
+          );
+        }
+        return L.circleMarker(latlng, {
+          radius: 3, color: stormColor(a.STORMNAME), fillColor: null,
+          fillOpacity: 0.2, weight: 1.5, opacity: 0.8,
+        });
+      },
+    }));
+  }
+
+  if (onMap || hurricanesEnabled) map.addLayer(hurricaneLayers);
+}
+
+function renderStormChips(storms) {
+  const wrap = document.getElementById("storms-list");
+  wrap.innerHTML = "";
+  storms.forEach((s) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "h-chip";
+
+    const name = document.createElement("span");
+    name.className = "h-name";
+    name.textContent = s.name;
+
+    const cat = document.createElement("span");
+    cat.className = "h-cat " + catInfo(s).cls;
+    cat.textContent = catInfo(s).label;
+
+    const meta = document.createElement("span");
+    meta.className = "h-meta";
+    const parts = [];
+    if (s.windKt != null) parts.push("wind " + s.windKt + " kt");
+    if (s.mslp != null) parts.push(s.mslp + " mb");
+    if (s.dirDeg != null) parts.push("moving " + compass(s.dirDeg) + " at " + s.spdKt + " kt");
+    meta.textContent = parts.join(" \u00b7 ");
+
+    btn.append(name, cat, meta);
+    btn.addEventListener("click", () => {
+      map.setView([s.lat, s.lon], 4);
+    });
+    wrap.appendChild(btn);
+  });
+}
 function tileLayerFor(kind) {
   return L.tileLayer(METEOTILES + kind + "/{z}/{x}/{y}.png?latitude=" + app.lat + "&longitude=" + app.lon, {
     zIndex: 400,
@@ -669,6 +993,18 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("layer-sat").addEventListener("change", (e) => {
     setSatellite(e.target.checked);
   });
+  document.getElementById("layer-hurr").addEventListener("change", (e) => {
+    hurricanesEnabled = e.target.checked;
+    if (hurricanesEnabled) {
+      if (hurricanesLoaded) {
+        if (map && !map.hasLayer(hurricaneLayers)) map.addLayer(hurricaneLayers);
+      } else {
+        loadHurricanes();
+      }
+    } else if (map && map.hasLayer(hurricaneLayers)) {
+      map.removeLayer(hurricaneLayers);
+    }
+  });
   document.getElementById("layer-precip").addEventListener("change", (e) => {
     if (e.target.checked) precip.addTo(map); else precip.remove();
   });
@@ -676,5 +1012,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.checked) temp.addTo(map); else temp.remove();
   });
 
+  loadHurricanes();
   locate();
 });

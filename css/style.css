@@ -201,8 +201,57 @@ footer a { color: var(--accent); text-decoration: none; }
 .sev-minor { --severity: #ffd43b; }
 .sev-unknown { --severity: #8fa3bd; }
 
+/* Hourly chart */
+.hourly-chart svg { width: 100%; height: auto; display: block; }
+#hourly-chart text { fill: var(--muted); font-size: 11px; }
+#hourly-chart .tick { opacity: 0.35; }
+#hourly-chart .hcode { stroke: var(--panel); stroke-width: 1; }
+
+/* Air quality & UV */
+.air-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.air-block { background: var(--panel-2); border-radius: 10px; padding: 0.9rem 1.1rem; }
+.air-block h3 { margin: 0 0 0.5rem; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.air-main { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; }
+.air-num { font-size: 2.1rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.air-badge {
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em; padding: 0.15rem 0.55rem;
+  border-radius: 999px; color: #0b1018; background: var(--muted);
+}
+.air-badge.air-good { background: var(--ok); }
+.air-badge.air-moderate { background: #ffd43b; }
+.air-badge.air-us { background: #ffa94d; }
+.air-badge.air-unhealthy { background: #ff6b4d; }
+.air-badge.air-very { background: #ff4d5e; }
+.air-badge.air-hazardous { background: #c44dff; }
+.air-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; margin: 0.6rem 0 0; }
+.air-stats dt { color: var(--muted); font-size: 0.75rem; }
+.air-stats dd { margin: 0; font-size: 0.9rem; font-weight: 600; }
+.air-note { font-size: 0.8rem; margin: 0.6rem 0 0; }
+
+/* Active tropical cyclones */
+.storms-list { display: flex; flex-direction: column; gap: 0.55rem; }
+.h-chip {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  background: var(--panel-2); border: 1px solid #2f425e; border-radius: 10px;
+  padding: 0.6rem 0.9rem; cursor: pointer; text-align: left; width: 100%;
+  color: var(--text); font-family: inherit; font-size: 0.92rem;
+}
+.h-chip:hover { border-color: var(--accent); }
+.h-name { font-weight: 700; font-size: 1rem; }
+.h-cat {
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 0.15rem 0.5rem; border-radius: 999px; color: #0b1018;
+}
+.h-cat.cat-ts { background: #ffd43b; }
+.h-cat.cat-1, .h-cat.cat-2 { background: #ffa94d; }
+.h-cat.cat-3, .h-cat.cat-4, .h-cat.cat-5 { background: #ff4d5e; }
+.h-cat.cat-other { background: var(--muted); }
+.h-meta { color: var(--muted); font-size: 0.82rem; }
+.storms-note { font-size: 0.82rem; margin: 0.7rem 0 0; }
+
 @media (max-width: 640px) {
   #cond-grid { grid-template-columns: 1fr; }
+  .air-grid { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; gap: 0.25rem; }
   .city-bar { flex-direction: column; align-items: stretch; }
   .city-search-wrap { margin-left: 0; }
