@@ -330,6 +330,7 @@ const WORLD_CLOCKS = [
   { city: "Moscow", tz: "Europe/Moscow" },
   { city: "London", tz: "Europe/London" },
   { city: "Tehran", tz: "Asia/Tehran" },
+  { city: "Tel Aviv", tz: "Asia/Jerusalem" },
   { city: "Chicago", tz: "America/Chicago" },
   { city: "Tokyo", tz: "Asia/Tokyo" },
   { city: "Beijing", tz: "Asia/Shanghai" },
