@@ -17,6 +17,31 @@ body {
   color: var(--text);
 }
 
+/* World clocks */
+.clocks {
+  display: flex;
+  justify-content: center;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: #0b1018;
+  border-bottom: 1px solid #2a3a52;
+}
+.clock { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.clock-city {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.clock-time {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .topbar {
   display: flex;
   align-items: baseline;
@@ -25,7 +50,6 @@ body {
   background: var(--panel);
   border-bottom: 1px solid #2a3a52;
 }
-
 .topbar h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0.4px; }
 .topbar .location { color: var(--muted); font-size: 0.95rem; }
 .topbar #loc-name { color: var(--accent); }
@@ -58,6 +82,7 @@ main {
 
 /* Radar map */
 #map { height: 420px; border-radius: 10px; border: 1px solid #2a3a52; z-index: 1; }
+#radar-time { margin-left: auto; }
 
 /* Conditions */
 #cond-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }

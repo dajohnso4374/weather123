@@ -75,7 +75,7 @@ async function loadRadar() {
 
     setupRadarLayers();
 
-    setRadarTime(data.radar.timestamps);
+    setRadarTime();
     setRadarStatus("live");
     startRadarAnimation();
     radarRefreshTimer = window.setInterval(refreshRadar, RADAR_REFRESH_MS);
@@ -169,11 +169,11 @@ function setRadarVisible(on) {
 
 function setRadarStatus(text) { document.getElementById("radar-status").innerHTML = text; }
 
-function setRadarTime(timestamps) {
+function setRadarTime() {
   const el = document.getElementById("radar-time");
-  if (!timestamps || timestamps.length < 2) { el.textContent = ""; return; }
-  const first = new Date(timestamps[0] * 1000);
-  const last = new Date(timestamps[timestamps.length - 1] * 1000);
+  if (!radarFrames.length) { el.textContent = ""; return; }
+  const last = new Date(radarFrames[radarFrames.length - 1].time * 1000);
+  const first = new Date(radarFrames[0].time * 1000);
   el.textContent = "last radar sweep " + last.toLocaleTimeString() +
     " · spans " + first.toLocaleTimeString() + "–" + last.toLocaleTimeString();
 }
@@ -221,7 +221,7 @@ async function refreshRadar() {
 
     radarFrames = frames;
     radarFrameIndex = Math.min(radarFrameIndex, radarFrames.length - 1);
-    setRadarTime(data.radar.timestamps);
+    setRadarTime();
   } catch (err) {
     // keep animating old frames; try again next cycle
   }
@@ -325,6 +325,56 @@ function afterLocation() {
   initMap();
 }
 
+// ---------- World clocks ----------
+const WORLD_CLOCKS = [
+  { city: "Moscow", tz: "Europe/Moscow" },
+  { city: "London", tz: "Europe/London" },
+  { city: "Tehran", tz: "Asia/Tehran" },
+  { city: "Chicago", tz: "America/Chicago" },
+  { city: "Tokyo", tz: "Asia/Tokyo" },
+  { city: "Beijing", tz: "Asia/Shanghai" },
+];
+const clockFormats = new Map();
+
+function buildClocks() {
+  const wrap = document.getElementById("clocks");
+  if (!wrap) return;
+  WORLD_CLOCKS.forEach(({ city, tz }) => {
+    const div = document.createElement("div");
+    div.className = "clock";
+    div.dataset.tz = tz;
+
+    const cityEl = document.createElement("span");
+    cityEl.className = "clock-city";
+    cityEl.textContent = city;
+
+    const timeEl = document.createElement("time");
+    timeEl.className = "clock-time";
+    timeEl.textContent = "--:--:--";
+
+    div.append(cityEl, timeEl);
+    wrap.appendChild(div);
+  });
+  tickClocks();
+  window.setInterval(tickClocks, 1000);
+}
+
+function tickClocks() {
+  const now = new Date();
+  document.querySelectorAll(".clock").forEach((el) => {
+    const tz = el.dataset.tz;
+    let fmt = clockFormats.get(tz);
+    if (!fmt) {
+      fmt = new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hour12: false, timeZone: tz,
+      });
+      clockFormats.set(tz, fmt);
+    }
+    el.querySelector(".clock-time").textContent = fmt.format(now);
+  });
+}
+
 // ---------- Extra layers (Open-Meteo tile layers) ----------
 function tileLayerFor(kind) {
   return L.tileLayer(METEOTILES + kind + "/{z}/{x}/{y}.png?latitude=" + app.lat + "&longitude=" + app.lon, {
@@ -335,6 +385,7 @@ function tileLayerFor(kind) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  buildClocks();
   const precip = tileLayerFor("precipitation");
   const temp = tileLayerFor("temperature");
 
