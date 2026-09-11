@@ -43,7 +43,6 @@ let citySelectPending = false;
 let citySearchTimer = null;
 
 const RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json";
-const METEOTILES = "https://tile.open-meteo.com/v1/";
 
 // Share links, notifications, alert polygons, sun & moon
 let shareZoom = 0;
@@ -1225,13 +1224,19 @@ function renderStormChips(storms) {
     wrap.appendChild(btn);
   });
 }
-function tileLayerFor(kind) {
-  return L.tileLayer(METEOTILES + kind + "/{z}/{x}/{y}.png?latitude=" + app.lat + "&longitude=" + app.lon, {
+// Extra layers: precipitation via Iowa State MRMS (keyless, any zoom)
+const mrmsPrecip = L.tileLayer.wms(
+  "https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi",
+  {
+    layers: "mrms_p1h",
+    format: "image/png",
+    transparent: true,
+    opacity: 0.65,
     zIndex: 400,
-    opacity: 0.6,
-    attribution: '&copy; <a href="https://open-meteo.com/">Open-Meteo</a>',
-  });
-}
+    maxNativeZoom: 12,
+    attribution: 'precip &copy; <a href="https://mesonet.agron.iastate.edu/ogc/">Iowa State MRMS</a>',
+  }
+);
 
 document.addEventListener("DOMContentLoaded", () => {
   buildClocks();
@@ -1242,8 +1247,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupNotifButton();
   loadHurricanes();
 
-  const precip = tileLayerFor("precipitation");
-  const temp = tileLayerFor("temperature");
+  const precip = mrmsPrecip;
 
   document.getElementById("layer-radar").addEventListener("change", (e) => {
     setRadarVisible(e.target.checked);
@@ -1265,9 +1269,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("layer-precip").addEventListener("change", (e) => {
     if (e.target.checked) precip.addTo(map); else precip.remove();
-  });
-  document.getElementById("layer-temp").addEventListener("change", (e) => {
-    if (e.target.checked) temp.addTo(map); else temp.remove();
   });
   document.getElementById("layer-warn").addEventListener("change", (e) => {
     alertPolyEnabled = e.target.checked;
