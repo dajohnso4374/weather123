@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>weather123 — Simple Weather + Radar</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2354b3ff'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' font-family='sans-serif' font-weight='bold' fill='%230b1018'%3EW%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="css/style.css">
@@ -17,6 +18,14 @@
       <span id="loc-name">Detecting location&hellip;</span>
     </div>
   </header>
+
+  <div class="city-bar" id="city-bar">
+    <div id="city-tabs" class="city-tabs"><!-- filled by JS --></div>
+    <div class="city-search-wrap">
+      <input id="city-search" type="search" placeholder="Search a city&hellip;" autocomplete="off">
+      <div id="city-results" class="city-results"><!-- filled by JS --></div>
+    </div>
+  </div>
 
   <main>
     <section id="radar-section" class="card">
@@ -48,6 +57,14 @@
       </div>
     </section>
 
+    <section id="alerts" class="card" style="display: none">
+      <div class="card-head">
+        <h2>Severe Weather Alerts</h2>
+        <span id="alerts-zone" class="muted"></span>
+      </div>
+      <div id="alerts-body"><!-- filled by JS --></div>
+    </section>
+
     <section id="forecast" class="card">
       <div class="card-head">
         <h2>5-Day Forecast</h2>
@@ -59,6 +76,7 @@
       <div class="card-head"><h2>Radar Source Layers</h2></div>
       <div class="layer-toggle">
         <label><input type="checkbox" id="layer-radar" checked> Rain (RainViewer)</label>
+        <label><input type="checkbox" id="layer-sat"> Satellite (GOES)</label>
         <label><input type="checkbox" id="layer-precip"> Precipitation (Open-Meteo tiles)</label>
         <label><input type="checkbox" id="layer-temp"> Temperature (Open-Meteo tiles)</label>
       </div>
@@ -69,6 +87,7 @@
     <p class="muted">
       Data: <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> radar,
       <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> weather / tiles,
+      <a href="https://www.noaa.gov/" target="_blank" rel="noopener">NOAA</a> alerts &amp; GOES satellite,
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> map.
     </p>
   </footer>

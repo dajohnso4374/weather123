@@ -21,6 +21,27 @@ const WEATHER_REFRESH_MS = 15 * 60 * 1000;
 let radarRefreshTimer = null;
 let weatherRefreshTimer = null;
 
+// Alerts (NWS)
+let alertsSeq = 0;
+const NWS_ALERTS = "https://api.weather.gov/alerts/active";
+
+// Satellite (NOAA GOES ImageServer)
+const SAT_ENDPOINT =
+  "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/MERGED_GeoColor/ImageServer/exportImage";
+let satEnabled = false;
+let satOverlay = null;
+let satBusy = false;
+let satTimer = null;
+let satRefreshQueued = false;
+
+// Saved cities + search
+const HOME = DEFAULT_LOCATION;
+const LS_CITIES = "w123-cities";
+let cities = [];
+let selectedCity = null;
+let citySelectPending = false;
+let citySearchTimer = null;
+
 const RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json";
 const METEOTILES = "https://tile.open-meteo.com/v1/";
 
@@ -194,6 +215,7 @@ async function loadWeather(lat, lon, label, geocode) {
     renderCurrent(data.current);
     renderForecast(data.daily);
     lastWeather = { lat, lon };
+    loadAlerts(lat, lon);
     if (label) {
       document.getElementById("cond-loc").textContent = label;
     } else if (geocode) {
@@ -228,9 +250,12 @@ async function refreshRadar() {
 }
 
 function onMapMove() {
+  scheduleSatellite();
+  if (citySelectPending) { citySelectPending = false; return; }
   if (lastWeather.lat && !centerChanged()) return;
   const c = map.getCenter();
   loadWeather(c.lat, c.lng);
+  loadAlerts(c.lat, c.lng);
 }
 
 function centerChanged() {
@@ -325,6 +350,250 @@ function afterLocation() {
   initMap();
 }
 
+// ---------- Severe weather alerts (NWS) ----------
+async function loadAlerts(lat, lon) {
+  const seq = ++alertsSeq;
+  try {
+    const res = await fetch(NWS_ALERTS + "?point=" + lat.toFixed(4) + "," + lon.toFixed(4));
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (seq !== alertsSeq) return;
+    renderAlerts(data.features || []);
+  } catch (err) {
+    if (seq !== alertsSeq) return;
+    renderAlerts(null, "Alerts unavailable (" + err.message + ")");
+  }
+}
+
+const ALERT_SEVERITY = { Severe: "sev-severe", Moderate: "sev-moderate", Minor: "sev-minor" };
+
+function rankSeverity(s) {
+  const r = { Extreme: 0, Severe: 0, Moderate: 1, Minor: 2 }[s];
+  return r === undefined ? 3 : r;
+}
+
+function renderAlerts(features, errText) {
+  const card = document.getElementById("alerts");
+  const body = document.getElementById("alerts-body");
+  const zone = document.getElementById("alerts-zone");
+  body.innerHTML = "";
+  if (errText || !features || !features.length) {
+    card.style.display = "none";
+    zone.textContent = "";
+    return;
+  }
+  const ranked = features
+    .filter((f) => f.properties && f.properties.event)
+    .sort((a, b) => rankSeverity(a.properties.severity) - rankSeverity(b.properties.severity))
+    .slice(0, 6);
+
+  card.style.display = "";
+  zone.textContent = features.length + " active alert" + (features.length === 1 ? "" : "s")
+    + " for this area";
+
+  ranked.forEach((f) => {
+    const p = f.properties;
+    const item = document.createElement("div");
+    item.className = "alert-item " + (ALERT_SEVERITY[p.severity] || "sev-unknown");
+
+    const head = document.createElement("div");
+    head.className = "alert-head";
+
+    const badge = document.createElement("span");
+    badge.className = "alert-badge";
+    badge.textContent = p.severity || "Unknown";
+
+    const ev = document.createElement("span");
+    ev.className = "alert-event";
+    ev.textContent = p.event;
+
+    const area = document.createElement("span");
+    area.className = "alert-area muted";
+    area.textContent = p.areaDesc || "";
+
+    head.append(badge, ev, area);
+
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = p.headline || "Details";
+    const desc = document.createElement("p");
+    desc.textContent = [p.description, p.instruction].filter(Boolean).join(" ");
+    details.append(summary, desc);
+
+    item.append(head, details);
+    body.appendChild(item);
+  });
+}
+
+// ---------- Satellite layer (NOAA GOES via ImageServer export) ----------
+function satUrl(w, h) {
+  const b = map.getBounds();
+  const NE = map.options.crs.project(b.getNorthEast());
+  const SW = map.options.crs.project(b.getSouthWest());
+  const bbox = [SW.x, SW.y, NE.x, NE.y].map((v) => v.toFixed(0)).join(",");
+  return SAT_ENDPOINT + "?bbox=" + bbox + "&bboxSR=3857&imageSR=3857&size=" + w + "," + h + "&format=jpg&f=image";
+}
+
+function refreshSatellite() {
+  if (!satEnabled || !map) return;
+  if (satBusy) { satRefreshQueued = true; return; }
+  satBusy = true;
+  const size = map.getSize();
+  const img = new Image();
+  img.onload = () => {
+    satBusy = false;
+    if (!satEnabled) return;
+    const bounds = map.getBounds();
+    if (!satOverlay) {
+      satOverlay = L.imageOverlay(img.src, bounds, {
+        opacity: 0.85,
+        zIndex: 450,
+        attribution: 'satellite &copy; <a href="https://www.noaa.gov/">NOAA/STAR</a>',
+      }).addTo(map);
+    } else {
+      satOverlay.setUrl(img.src);
+      satOverlay.setBounds(bounds);
+    }
+    if (satRefreshQueued) { satRefreshQueued = false; scheduleSatellite(); }
+  };
+  img.onerror = () => { satBusy = false; };
+  img.src = satUrl(size.x, size.y);
+}
+
+function scheduleSatellite() {
+  if (!satEnabled) return;
+  if (satTimer) window.clearTimeout(satTimer);
+  satTimer = window.setTimeout(() => {
+    satTimer = null;
+    if (!satBusy) refreshSatellite(); else satRefreshQueued = true;
+  }, 700);
+}
+
+function setSatellite(enabled) {
+  satEnabled = enabled;
+  if (!enabled) {
+    if (satOverlay && map.hasLayer(satOverlay)) map.removeLayer(satOverlay);
+    satOverlay = null;
+  } else {
+    refreshSatellite();
+  }
+}
+
+// ---------- City search & saved tabs ----------
+function loadCities() {
+  try {
+    const raw = localStorage.getItem(LS_CITIES);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function saveCities() {
+  try { localStorage.setItem(LS_CITIES, JSON.stringify(cities)); } catch { /* ignore */ }
+}
+
+function renderCityTabs() {
+  const tabs = document.getElementById("city-tabs");
+  tabs.innerHTML = "";
+
+  const mkTab = (city, active) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "city-tab" + (active ? " active" : "");
+    btn.textContent = city.name;
+    btn.title = city.name;
+    if (city !== HOME) {
+      const x = document.createElement("span");
+      x.className = "city-remove";
+      x.textContent = "x";
+      x.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeCity(city);
+      });
+      btn.appendChild(x);
+    }
+    btn.addEventListener("click", () => selectCity(city));
+    return btn;
+  };
+
+  tabs.appendChild(mkTab(HOME, !selectedCity));
+  cities.forEach((c) => tabs.appendChild(mkTab(c, selectedCity === c)));
+}
+
+function selectCity(city) {
+  selectedCity = city;
+  citySelectPending = true;
+  map.setView([city.lat, city.lon], city === HOME ? 7 : 8);
+  document.getElementById("loc-name").textContent = city.name;
+  loadWeather(city.lat, city.lon, city.name);
+  loadAlerts(city.lat, city.lon);
+  renderCityTabs();
+}
+
+function removeCity(city) {
+  cities = cities.filter((c) => c !== city);
+  saveCities();
+  if (selectedCity === city) selectedCity = null;
+  renderCityTabs();
+}
+
+function addSavedCity(city) {
+  if (!cities.some((c) => Math.abs(c.lat - city.lat) < 0.01 && Math.abs(c.lon - city.lon) < 0.01)) {
+    cities.push(city);
+    saveCities();
+  }
+  selectCity(city);
+}
+
+function setupCitySearch() {
+  const input = document.getElementById("city-search");
+  const box = document.getElementById("city-results");
+
+  input.addEventListener("input", () => {
+    if (citySearchTimer) window.clearTimeout(citySearchTimer);
+    const q = input.value.trim();
+    if (q.length < 2) { box.classList.remove("open"); box.innerHTML = ""; return; }
+    citySearchTimer = window.setTimeout(() => geocodeCity(q), 350);
+  });
+
+  input.addEventListener("blur", () => {
+    window.setTimeout(() => box.classList.remove("open"), 150);
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#city-search") && !e.target.closest("#city-results")) box.classList.remove("open");
+  });
+}
+
+async function geocodeCity(q) {
+  const box = document.getElementById("city-results");
+  try {
+    const res = await fetch(
+      "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(q) +
+      "&count=6&language=en&format=json"
+    );
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const results = data.results || [];
+    box.innerHTML = "";
+    results.forEach((r) => {
+      const item = document.createElement("div");
+      item.className = "city-result-item";
+      item.textContent = [r.name, r.admin1, r.country_code].filter(Boolean).join(", ");
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        addSavedCity({ lat: r.latitude, lon: r.longitude, name: r.name });
+        document.getElementById("city-search").value = "";
+        box.classList.remove("open");
+        box.innerHTML = "";
+      });
+      box.appendChild(item);
+    });
+    box.classList.toggle("open", results.length > 0);
+  } catch {
+    box.classList.remove("open");
+  }
+}
+
 // ---------- World clocks ----------
 const WORLD_CLOCKS = [
   { city: "Moscow", tz: "Europe/Moscow" },
@@ -387,11 +656,18 @@ function tileLayerFor(kind) {
 
 document.addEventListener("DOMContentLoaded", () => {
   buildClocks();
+  cities = loadCities();
+  renderCityTabs();
+  setupCitySearch();
+
   const precip = tileLayerFor("precipitation");
   const temp = tileLayerFor("temperature");
 
   document.getElementById("layer-radar").addEventListener("change", (e) => {
     setRadarVisible(e.target.checked);
+  });
+  document.getElementById("layer-sat").addEventListener("change", (e) => {
+    setSatellite(e.target.checked);
   });
   document.getElementById("layer-precip").addEventListener("change", (e) => {
     if (e.target.checked) precip.addTo(map); else precip.remove();
