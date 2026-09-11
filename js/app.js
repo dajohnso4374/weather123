@@ -45,6 +45,29 @@ let citySearchTimer = null;
 const RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json";
 const METEOTILES = "https://tile.open-meteo.com/v1/";
 
+// Share links, notifications, alert polygons, sun & moon
+let shareZoom = 0;
+const LS_NOTIF = "w123-notif";
+const LS_SEEN = "w123-seen-alerts";
+let notifEnabled = false;
+try { notifEnabled = localStorage.getItem(LS_NOTIF) === "1"; } catch (e) { /* ignore */ }
+const ALERT_EVT_COLORS = {
+  "Tornado Warning": "#ff4d5e",
+  "Severe Thunderstorm Warning": "#ff9f1c",
+  "Extreme Wind Warning": "#c952ff",
+  "Flash Flood Warning": "#ffd43b",
+  "Flood Warning": "#39d98a",
+  "Winter Storm Warning": "#9bdcff",
+  "Blizzard Warning": "#9bdcff",
+  "Dust Storm Warning": "#e8a33d",
+};
+let alertPolyLayer = null;
+let alertPolyEnabled = false;
+let alertPolyBusy = false;
+let alertPolyCache = null;
+let alertPolyCacheAt = 0;
+let alertPolyTimer = null;
+
 // Open-Meteo WMO weather codes -> short labels
 const WMO = {
   0: "Clear sky", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast",
@@ -61,7 +84,7 @@ function wmo(code) { return WMO[code] || "Unknown"; }
 
 // ---------- Map setup ----------
 function initMap() {
-  map = L.map("map", { zoomControl: true }).setView([app.lat, app.lon], 7);
+  map = L.map("map", { zoomControl: true }).setView([app.lat, app.lon], shareZoom || 7);
 
   baseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -77,6 +100,8 @@ function initMap() {
       loadWeather(lastWeather.lat, lastWeather.lon, null, false);
     }
     if (hurricanesLoaded && hurricanesEnabled) loadHurricanes();
+    if (alertPolyEnabled) { alertPolyCache = null; drawAlertPolys(); }
+    monitorAlertNotifications();
   }, WEATHER_REFRESH_MS);
 }
 
@@ -207,7 +232,7 @@ async function loadWeather(lat, lon, label, geocode) {
     "latitude=" + lat + "&longitude=" + lon +
     "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,precipitation,uv_index&" +
     "hourly=temperature_2m,precipitation_probability,weather_code&forecast_hours=24&" +
-    "daily=weather_code,temperature_2m_max,temperature_2m_min&" +
+    "daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,moonrise,moonset,moon_phase&" +
     "temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&" +
     "timezone=auto&forecast_days=5";
   try {
@@ -255,6 +280,7 @@ async function refreshRadar() {
 
 function onMapMove() {
   scheduleSatellite();
+  scheduleAlertPolys();
   if (citySelectPending) { citySelectPending = false; return; }
   if (lastWeather.lat && !centerChanged()) return;
   const c = map.getCenter();
@@ -463,6 +489,31 @@ function renderForecast(daily) {
     day.append(name, desc, temps);
     grid.appendChild(day);
   });
+  renderSunMoon(daily);
+}
+
+// ---------- Sun & moon ----------
+const MOON_NAMES = [
+  "New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+  "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent",
+];
+function moonName(p) {
+  const i = Math.round((p % 1) * 8) % 8;
+  return MOON_NAMES[i];
+}
+
+function renderSunMoon(daily) {
+  if (daily.sunrise && daily.sunrise[0]) {
+    document.getElementById("sun-rise").textContent =
+      new Date(daily.sunrise[0].replace(" ", "T"))
+        .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    document.getElementById("sun-set").textContent =
+      new Date(daily.sunset[0].replace(" ", "T"))
+        .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  if (daily.moon_phase && daily.moon_phase[0] != null) {
+    document.getElementById("moon-phase").textContent = moonName(daily.moon_phase[0]);
+  }
 }
 
 // ---------- Location ----------
@@ -788,6 +839,210 @@ function tickClocks() {
   });
 }
 
+// ---------- Share links (?lat=&lon=&zoom=&name=) ----------
+function loadShareParams() {
+  const sp = new URLSearchParams(location.search);
+  const lat = parseFloat(sp.get("lat"));
+  const lon = parseFloat(sp.get("lon"));
+  if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+  app.lat = lat;
+  app.lon = lon;
+  app.name = sp.get("name") || lat.toFixed(2) + ", " + lon.toFixed(2);
+  const zoom = parseInt(sp.get("zoom") || "0", 10);
+  if (zoom > 0 && zoom <= 18) shareZoom = zoom;
+  return true;
+}
+
+function setupShareButton() {
+  document.getElementById("share-btn").addEventListener("click", async () => {
+    const u = new URL(window.location.href);
+    u.search = "";
+    u.searchParams.set("lat", map.getCenter().lat.toFixed(4));
+    u.searchParams.set("lon", map.getCenter().lng.toFixed(4));
+    u.searchParams.set("zoom", String(map.getZoom()));
+    const name = document.getElementById("cond-loc").textContent.trim();
+    if (name && /[a-z]/i.test(name)) u.searchParams.set("name", name);
+    const href = u.href;
+    let ok = false;
+    try { await navigator.clipboard.writeText(href); ok = true; } catch (e) { /* below */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = href;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+        ok = true;
+      } catch (e) { /* ignore */ }
+    }
+    const btn = document.getElementById("share-btn");
+    const old = btn.textContent;
+    btn.textContent = ok ? "Copied!" : "Failed";
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  });
+}
+
+// ---------- Severe alert desktop notifications ----------
+function notifSupported() { return typeof Notification !== "undefined"; }
+
+function setupNotifButton() {
+  const btn = document.getElementById("notif-btn");
+  renderNotifButton();
+  btn.addEventListener("click", async () => {
+    if (!notifSupported()) { flashNotif("Unsupported"); return; }
+    if (Notification.permission === "granted") {
+      setNotif(!notifEnabled);
+      if (notifEnabled) monitorAlertNotifications();
+      return;
+    }
+    const p = await Notification.requestPermission();
+    if (p === "granted") {
+      setNotif(true);
+      monitorAlertNotifications();
+    } else {
+      flashNotif("Blocked by browser");
+    }
+  });
+}
+
+function setNotif(v) {
+  notifEnabled = v;
+  try { localStorage.setItem(LS_NOTIF, v ? "1" : "0"); } catch (e) { /* ignore */ }
+  renderNotifButton();
+}
+
+function renderNotifButton() {
+  const btn = document.getElementById("notif-btn");
+  btn.classList.toggle("enabled", notifEnabled && Notification.permission === "granted");
+  btn.textContent = notifEnabled && Notification.permission === "granted" ? "Alerts on" : "Enable alerts";
+}
+
+function flashNotif(text) {
+  const btn = document.getElementById("notif-btn");
+  const old = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => { btn.textContent = old; }, 1500);
+}
+
+function loadSeen() {
+  try { const a = JSON.parse(localStorage.getItem(LS_SEEN) || "[]"); return new Set(Array.isArray(a) ? a : []); }
+  catch (e) { return new Set(); }
+}
+function saveSeen(set) {
+  try {
+    let a = Array.from(set);
+    if (a.length > 300) a = a.slice(-300);
+    localStorage.setItem(LS_SEEN, JSON.stringify(a));
+  } catch (e) { /* ignore */ }
+}
+
+async function monitorAlertNotifications() {
+  if (!notifEnabled || !notifSupported() || Notification.permission !== "granted") return;
+  if (document.hasFocus() && !document.hidden) return; // user is watching; the alerts card covers it
+  const locs = [{ name: HOME.name, lat: HOME.lat, lon: HOME.lon }].concat(cities);
+  const seen = loadSeen();
+  for (const L of locs) {
+    try {
+      const res = await fetch(NWS_ALERTS + "?point=" + L.lat.toFixed(4) + "," + L.lon.toFixed(4));
+      if (!res.ok) continue;
+      const data = await res.json();
+      (data.features || []).forEach((f) => {
+        const p = f.properties;
+        if (!p || !p.event) return;
+        if (rankSeverity(p.severity) >= 1) return; // Extreme/Severe only
+        const a = p.id || f.id || p.headline;
+        if (!a || seen.has(a)) return;
+        seen.add(a);
+        try {
+          const n = new Notification(p.event, {
+            body: (p.headline || p.areaDesc || p.description || "").slice(0, 160),
+            tag: a,
+            requireInteraction: true,
+          });
+          setTimeout(() => n.close(), 30000);
+        } catch (e) { /* ignore */ }
+      });
+    } catch (e) { /* keep going */ }
+  }
+  saveSeen(seen);
+}
+
+// ---------- Active warning polygons (NWS) ----------
+function geometryBounds(geom) {
+  const out = [];
+  (function walk(v) {
+    if (!Array.isArray(v)) return;
+    if (typeof v[0] === "number" && typeof v[1] === "number") out.push(v);
+    else v.forEach(walk);
+  })(geom.coordinates);
+  if (!out.length) return null;
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  out.forEach((c) => {
+    const lon = c[0], lat = c[1];
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  });
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+async function ensurePolyFeed() {
+  if (alertPolyCache && Date.now() - alertPolyCacheAt < 10 * 60 * 1000) return alertPolyCache;
+  const res = await fetch("https://api.weather.gov/alerts/active?status=actual");
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  alertPolyCache = await res.json();
+  alertPolyCacheAt = Date.now();
+  return alertPolyCache;
+}
+
+function scheduleAlertPolys() {
+  if (!alertPolyEnabled || !map) return;
+  if (alertPolyTimer) window.clearTimeout(alertPolyTimer);
+  alertPolyTimer = window.setTimeout(() => { alertPolyTimer = null; drawAlertPolys(); }, 500);
+}
+
+async function drawAlertPolys() {
+  if (!alertPolyEnabled || !map || alertPolyBusy) return;
+  alertPolyBusy = true;
+  try {
+    const feed = await ensurePolyFeed();
+    const b = map.getBounds();
+    const feats = (feed.features || []).filter((f) => {
+      const p = f.properties || {};
+      if (!f.geometry || !f.geometry.type || !ALERT_EVT_COLORS[p.event]) return false;
+      const bb = geometryBounds(f.geometry);
+      if (!bb) return false;
+      return !(
+        bb.maxLat < b.getSouth() - 0.6 || bb.minLat > b.getNorth() + 0.6 ||
+        bb.maxLon < b.getWest() - 0.6 || bb.minLon > b.getEast() + 0.6
+      );
+    });
+    if (!alertPolyLayer) alertPolyLayer = L.featureGroup();
+    if (map.hasLayer(alertPolyLayer)) map.removeLayer(alertPolyLayer);
+    alertPolyLayer.clearLayers();
+    if (feats.length) {
+      const layer = L.geoJSON({ type: "FeatureCollection", features: feats.slice(0, 150) }, {
+        style: (f) => {
+          const c = ALERT_EVT_COLORS[f.properties.event];
+          return { color: c, fillColor: c, fillOpacity: 0.12, weight: 1.5 };
+        },
+        onEachFeature: (f, l) => {
+          const p = f.properties;
+          l.bindPopup(
+            "<b>" + p.event + "</b>" +
+            (p.areaDesc ? "<br>" + p.areaDesc : "") +
+            (p.headline ? "<br><i>" + p.headline + "</i>" : "")
+          );
+        },
+      });
+      alertPolyLayer.addLayer(layer);
+    }
+    map.addLayer(alertPolyLayer);
+  } catch (e) { /* try again next cycle */ } finally { alertPolyBusy = false; }
+}
+
 // ---------- Active tropical cyclones (NHC via Esri) ----------
 const HURRICANE_FS =
   "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/Active_Hurricanes_v1/FeatureServer";
@@ -983,6 +1238,9 @@ document.addEventListener("DOMContentLoaded", () => {
   cities = loadCities();
   renderCityTabs();
   setupCitySearch();
+  setupShareButton();
+  setupNotifButton();
+  loadHurricanes();
 
   const precip = tileLayerFor("precipitation");
   const temp = tileLayerFor("temperature");
@@ -1011,7 +1269,15 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("layer-temp").addEventListener("change", (e) => {
     if (e.target.checked) temp.addTo(map); else temp.remove();
   });
+  document.getElementById("layer-warn").addEventListener("change", (e) => {
+    alertPolyEnabled = e.target.checked;
+    if (!e.target.checked && alertPolyLayer && map && map.hasLayer(alertPolyLayer)) {
+      map.removeLayer(alertPolyLayer);
+    } else if (e.target.checked) {
+      scheduleAlertPolys();
+    }
+  });
 
-  loadHurricanes();
-  locate();
+  if (!loadShareParams()) locate();
+  else afterLocation();
 });

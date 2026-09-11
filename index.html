@@ -17,6 +17,10 @@
       <span class="loc-label">Radar + conditions for</span>
       <span id="loc-name">Detecting location&hellip;</span>
     </div>
+    <div class="loc-actions">
+      <button type="button" id="share-btn" class="btn" title="Copy a link to this exact map view">Share</button>
+      <button type="button" id="notif-btn" class="btn" title="Get a desktop notification when a Severe alert is issued for your cities">Enable alerts</button>
+    </div>
   </header>
 
   <div class="city-bar" id="city-bar">
@@ -54,6 +58,11 @@
           <div><dt>Precipitation</dt><dd id="cond-precip">&mdash;</dd></div>
           <div><dt>Updated</dt><dd id="cond-updated">&mdash;</dd></div>
         </dl>
+      </div>
+      <div id="sun-moon" class="sun-moon muted">
+        <span>Sunrise <b id="sun-rise">&mdash;</b></span>
+        <span>Sunset <b id="sun-set">&mdash;</b></span>
+        <span>Moon <b id="moon-phase">&mdash;</b></span>
       </div>
     </section>
 
@@ -124,6 +133,7 @@
         <label><input type="checkbox" id="layer-hurr"> Hurricanes (tracks &amp; cone)</label>
         <label><input type="checkbox" id="layer-precip"> Precipitation (Open-Meteo tiles)</label>
         <label><input type="checkbox" id="layer-temp"> Temperature (Open-Meteo tiles)</label>
+        <label><input type="checkbox" id="layer-warn"> Warnings (NWS polygons)</label>
       </div>
     </section>
   </main>
@@ -131,8 +141,9 @@
   <footer>
     <p class="muted">
       Data: <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> radar,
-      <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> weather / tiles,
-      <a href="https://www.noaa.gov/" target="_blank" rel="noopener">NOAA</a> alerts &amp; GOES satellite,
+      <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> weather / tiles / air quality,
+      <a href="https://www.noaa.gov/" target="_blank" rel="noopener">NOAA NWS</a> alerts, satellite &amp; tropical data,
+      <a href="https://www.esri.com/en-us/arcgis" target="_blank" rel="noopener">Esri</a> live cyclone feed,
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> map.
     </p>
   </footer>
